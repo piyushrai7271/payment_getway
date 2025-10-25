@@ -4,19 +4,18 @@ import {
     loginUser,
     changePassword,
     refreshToken,
-    updateUserDetails,
     getUserDetails,
     logOut
 } from "../controllers/userAuth.controller.js";
+import { verifyJwt } from "../middlewares/auth.middleware.js";
 const router = express.Router();
 
 router.post("/registerUser",registerUser);
 router.post("/login",loginUser);
-router.post("/chnage-password",changePassword);
+router.post("/chnage-password",verifyJwt,changePassword);
 router.post("/refresh-token",refreshToken);
-router.put("updateUser-details",updateUserDetails);
-router.get("/getUserDetails",getUserDetails);
-router.post("/logOut",logOut);
+router.get("/getUserDetails",verifyJwt,getUserDetails);
+router.post("/logOut",verifyJwt,logOut);
 
 
 export default router;
