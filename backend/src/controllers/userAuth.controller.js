@@ -1,4 +1,5 @@
 import UserAuth from "../models/userAuth.model.js";
+import jwt from "jsonwebtoken";
 
 const generateAccessAndRefreshToken = async (userId) => {
   try {
@@ -79,9 +80,12 @@ const registerUser = async (req, res) => {
       mobileNumber,
       password, // password is already hashed in model with pre hook
     });
+    // console.log(`This is what we get from user object : ${user}`);// for learning and testing only
 
     user.password = undefined;
     user.refreshToken = undefined;
+
+    // console.log(`This is what we get from user object : ${user}`);// for learning and testing only
 
     // return success response
     return res.status(201).json({
@@ -136,7 +140,7 @@ const loginUser = async (req, res) => {
       });
     }
 
-    await user.save({ validateBeforeSave: false });
+    // await user.save({ validateBeforeSave: false });
 
     const options = {
       httpOnly: true,
@@ -158,6 +162,7 @@ const loginUser = async (req, res) => {
       .json({
         success: true,
         message: "User login successfully !!",
+        accessToken,
         data: userObj,
       });
   } catch (error) {
@@ -171,72 +176,219 @@ const loginUser = async (req, res) => {
 const changePassword = async (req, res) => {
   try {
     // take newPassword , confirmPassword, oldPassword from req.body
-    const {newPassword,confirmPassword,oldPassword} = req.body;
+    const { newPassword, confirmPassword, oldPassword } = req.body;
     // userId from middleware
     const userId = req.userId;
-    if(!userId){
+    if (!userId) {
       return res.status(401).json({
-        success:false,
-        message:"Unauthorized user !!"
-      })
+        success: false,
+        message: "Unauthorized user !!",
+      });
     }
     // validate comming input
-    if(!newPassword || !confirmPassword || !oldPassword){
+    if (!newPassword || !confirmPassword || !oldPassword) {
       return res.status(404).json({
-        success:false,
-        message:"please provide all the required feild !!"
-      })
+        success: false,
+        message: "please provide all the required feild !!",
+      });
     }
     // check newPassword and confirmPassword are equal or not
-    if(newPassword !== confirmPassword){
+    if (newPassword !== confirmPassword) {
       return res.status(402).json({
-        success:false,
-        message:"Please provide same password in confirm and newPass"
-      })
+        success: false,
+        message: "Please provide same password in confirm and newPass",
+      });
     }
     //find user with userId
-    const user = await UserAuth.findById(userId).lean();
-    if(!user){
-       return res.status(401).json({
-        success:false,
-        message:"User not found with given id"
-       })
+    const user = await UserAuth.findById(userId);
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: "User not found with given id",
+      });
     }
     //check password is correct or not if not return error
     const isPasswordValid = await user.isPasswordCorrect(oldPassword);
-    if(!isPasswordValid){
+    if (!isPasswordValid) {
       return res.status(401).json({
-        success:false,
-        message:"Unauthorized access !!"
-      })
+        success: false,
+        message: "Unauthorized access !!",
+      });
     }
     //save new password to db and return success message
     user.password = newPassword;
-    await user.save({validateBeforeSave:false});
+    await user.save({ validateBeforeSave: false });
 
     return res.status(200).json({
-      success:true,
-      message:"Password changed succefully !!"
-    })
+      success: true,
+      message: "Password changed succefully !!",
+    });
   } catch (error) {
-    console.error("Error in changing password :",error);
+    console.error("Error in changing password :", error);
     return res.status(500).json({
-      success:false,
-      message:"Internal server error !!"
-    })
+      success: false,
+      message: "Internal server error !!",
+    });
   }
 };
-const refreshToken = async (req, res) => {};
-const updateUserDetails = async (req, res) => {};
-const getUserDetails = async (req, res) => {};
-const logOut = async (req, res) => {};
+const refreshToken = async (req, res) => {
+  try {
+    const incomingRefreshToken =
+      req.cookies?.refreshToken || req.body.refreshToken;
+
+    if (!incomingRefreshToken) {
+      return res.status(404).json({
+        success: false,
+        message: "Unauthorize access !!",
+      });
+    }
+
+    const decodedToken = jwt.verify(
+      incomingRefreshToken,
+      process.env.REFRESH_TOKEN_SECRET
+    );
+    if (!decodedToken) {
+      return res.status(402).json({
+        success: false,
+        message: "decoded token is not comming",
+      });
+    }
+
+    const user = await UserAuth.findById(decodedToken._id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "Invalide refresh Token",
+      });
+    }
+
+    if (incomingRefreshToken !== user.refreshToken) {
+      return res.status(405).json({
+        success: false,
+        message: "Refresh Token is expired or used",
+      });
+    }
+
+    const { accessToken, newRefreshToken } = generateAccessAndRefreshToken(
+      user._id
+    );
+
+    const options = {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      maxAge: 15 * 24 * 60 * 60 * 1000,
+    };
+
+    return res
+      .status(200)
+      .cookie("accessToken", accessToken, options)
+      .cookie("refreshToken", refreshToken, options)
+      .json({
+        success: true,
+        message: "refresh token is refreshed ",
+        accessToken,
+        refreshToken: newRefreshToken,
+      });
+  } catch (error) {
+    console.error("Error in refreshing token :", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server Error !!",
+    });
+  }
+};
+const getUserDetails = async (req, res) => {
+  try {
+    const userId = req.userId;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized access !!",
+      });
+    }
+
+    const user = await UserAuth.findById(userId).lean(); // ⚡ lean for performance
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found with given userId",
+      });
+    }
+
+    // ✅ remove sensitive fields
+    delete user.password;
+    delete user.refreshToken;
+
+    return res.status(200).json({
+      success: true,
+      message: "User details fetched successfully !!",
+      data: user,
+    });
+  } catch (error) {
+    console.error("Error in getUserDetails:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error !!",
+    });
+  }
+};
+const logOut = async (req, res) => {
+  try {
+    const userId = req.userId;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized: userId missing !!",
+      });
+    }
+
+    // ✅ Update refreshToken directly (fast & atomic)
+    const user = await UserAuth.findByIdAndUpdate(
+      userId,
+      { $set: { refreshToken: null } },
+      { new: true, lean: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found !!",
+      });
+    }
+
+    // ✅ Secure cookie options
+    const options = {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production", // ensures secure flag only in prod
+      sameSite: "strict",
+    };
+
+    // ✅ Clear tokens from cookies
+    return res
+      .status(200)
+      .clearCookie("accessToken", options)
+      .clearCookie("refreshToken", options)
+      .json({
+        success: true,
+        message: "User logged out successfully !!",
+      });
+  } catch (error) {
+    console.error("Error in logout user:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error !!",
+    });
+  }
+};
 
 export {
   registerUser,
   loginUser,
   changePassword,
   refreshToken,
-  updateUserDetails,
   getUserDetails,
   logOut,
 };
